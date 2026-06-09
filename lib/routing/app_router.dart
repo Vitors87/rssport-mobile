@@ -6,12 +6,10 @@ import '../features/events/presentation/pages/events_page.dart';
 import '../features/activity/presentation/pages/activity_tracker_page.dart';
 import '../features/community/presentation/pages/community_page.dart';
 import '../features/profile/presentation/pages/profile_page.dart';
+import '../features/ranking/presentation/pages/ranking_page.dart';
 import '../shared/widgets/main_scaffold.dart';
 import 'app_routes.dart';
 
-// Configuración centralizada del router.
-// ShellRoute envuelve home/events/community/profile con el MainScaffold
-// (BottomNavigationBar), mientras que splash y login son rutas independientes.
 abstract class AppRouter {
   static final GoRouter router = GoRouter(
     initialLocation: AppRoutes.splash,
@@ -54,6 +52,11 @@ abstract class AppRouter {
             path: AppRoutes.profile,
             name: 'profile',
             builder: (context, state) => const ProfilePage(),
+          ),
+          GoRoute(
+            path: AppRoutes.ranking,
+            name: 'ranking',
+            builder: (context, state) => const RankingPage(),
           ),
         ],
       ),

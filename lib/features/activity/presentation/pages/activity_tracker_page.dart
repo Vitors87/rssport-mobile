@@ -1,10 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../../theme/app_colors.dart';
+import '../../data/models/sport_model.dart';
 import '../../data/repositories/activity_repository.dart';
 import '../../data/repositories/sports_repository.dart';
-
-enum _ActivityState { ready, running, paused, finished }
 
 class ActivityTrackerPage extends StatefulWidget {
   const ActivityTrackerPage({super.key});
@@ -14,120 +13,178 @@ class ActivityTrackerPage extends StatefulWidget {
 }
 
 class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
-  _ActivityState _state = _ActivityState.ready;
+  // ─── Cronómetro ────────────────────────────────────────────────────────────
   Timer? _timer;
   int _elapsedSeconds = 0;
+  bool _isRunning = false;
+  bool _finished = false;
 
-  // Deporte cargado desde la API
-  String? _runningSportId;
-  String _sportName = 'Running';
+  final _timerTitleCtrl = TextEditingController();
+  final _timerDescCtrl = TextEditingController();
+  final _timerDistCtrl = TextEditingController();
+  final _timerElevCtrl = TextEditingController();
+  String? _timerSportId;
+
+  // ─── Manual ────────────────────────────────────────────────────────────────
+  final _formKey = GlobalKey<FormState>();
+  final _manualTitleCtrl = TextEditingController();
+  final _manualDescCtrl = TextEditingController();
+  final _manualDistCtrl = TextEditingController();
+  final _manualDurationCtrl = TextEditingController();
+  final _manualElevCtrl = TextEditingController();
+  String? _manualSportId;
+  DateTime _manualDate = DateTime.now();
+
+  // ─── Shared ────────────────────────────────────────────────────────────────
+  List<SportModel> _sports = [];
+  bool _sportsLoading = false;
   bool _saving = false;
-
-  // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   @override
   void initState() {
     super.initState();
-    _loadRunningSport();
-  }
-
-  Future<void> _loadRunningSport() async {
-    try {
-      final sports = await SportsRepository.getSports();
-      if (!mounted) return;
-      final running = sports.where((s) => s.type == 'RUNNING').firstOrNull;
-      if (running != null) {
-        setState(() {
-          _runningSportId = running.id;
-          _sportName = running.name;
-        });
-      }
-    } catch (_) {
-      // Fallo silencioso; el botón guardar lo gestionará si sportId es null
-    }
+    _loadSports();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _timerTitleCtrl.dispose();
+    _timerDescCtrl.dispose();
+    _timerDistCtrl.dispose();
+    _timerElevCtrl.dispose();
+    _manualTitleCtrl.dispose();
+    _manualDescCtrl.dispose();
+    _manualDistCtrl.dispose();
+    _manualDurationCtrl.dispose();
+    _manualElevCtrl.dispose();
     super.dispose();
   }
 
-  // ── Formateo HH:MM:SS ─────────────────────────────────────────────────────
-
-  String get _timeString {
-    final h = _elapsedSeconds ~/ 3600;
-    final m = (_elapsedSeconds % 3600) ~/ 60;
-    final s = _elapsedSeconds % 60;
-    return '${h.toString().padLeft(2, '0')}:'
-        '${m.toString().padLeft(2, '0')}:'
-        '${s.toString().padLeft(2, '0')}';
+  Future<void> _loadSports() async {
+    setState(() => _sportsLoading = true);
+    try {
+      final sports = await SportsRepository.getSports();
+      if (mounted) setState(() => _sports = sports);
+    } catch (_) {
+      // fallback silencioso; dropdown queda vacío
+    } finally {
+      if (mounted) setState(() => _sportsLoading = false);
+    }
   }
 
-  // ── Estado visual ─────────────────────────────────────────────────────────
-
-  String get _stateLabel => switch (_state) {
-        _ActivityState.ready => 'Lista',
-        _ActivityState.running => 'En curso',
-        _ActivityState.paused => 'Pausada',
-        _ActivityState.finished => 'Finalizada',
-      };
-
-  Color get _stateColor => switch (_state) {
-        _ActivityState.ready => AppColors.grey,
-        _ActivityState.running => AppColors.success,
-        _ActivityState.paused => AppColors.warning,
-        _ActivityState.finished => AppColors.info,
-      };
-
-  // ── Acciones del cronómetro ───────────────────────────────────────────────
-
-  void _start() {
-    setState(() => _state = _ActivityState.running);
+  // ─── Timer logic ───────────────────────────────────────────────────────────
+  void _startTimer() {
+    setState(() => _isRunning = true);
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       setState(() => _elapsedSeconds++);
     });
   }
 
-  void _pause() {
+  void _pauseTimer() {
     _timer?.cancel();
-    setState(() => _state = _ActivityState.paused);
+    setState(() => _isRunning = false);
   }
 
-  void _finish() {
+  void _finishTimer() {
     _timer?.cancel();
-    setState(() => _state = _ActivityState.finished);
+    setState(() {
+      _isRunning = false;
+      _finished = true;
+    });
   }
 
-  Future<void> _save() async {
-    if (_runningSportId == null) {
-      _showSnackBar('No se pudo conectar al servidor. Inténtalo de nuevo.', AppColors.error);
+  void _resetTimer() {
+    _timer?.cancel();
+    setState(() {
+      _isRunning = false;
+      _finished = false;
+      _elapsedSeconds = 0;
+      _timerSportId = null;
+    });
+    _timerTitleCtrl.clear();
+    _timerDescCtrl.clear();
+    _timerDistCtrl.clear();
+    _timerElevCtrl.clear();
+  }
+
+  String get _formattedTime {
+    final h = _elapsedSeconds ~/ 3600;
+    final m = (_elapsedSeconds % 3600) ~/ 60;
+    final s = _elapsedSeconds % 60;
+    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _saveFromTimer() async {
+    if (_timerTitleCtrl.text.trim().isEmpty) {
+      _snack('El título es obligatorio');
       return;
     }
-
+    if (_timerSportId == null) {
+      _snack('Selecciona un deporte');
+      return;
+    }
     setState(() => _saving = true);
-
     try {
       await ActivityRepository.saveActivity(
-        title: 'Actividad desde mobile',
-        durationSeconds: _elapsedSeconds,
-        sportId: _runningSportId!,
+        title: _timerTitleCtrl.text.trim(),
+        sportId: _timerSportId!,
+        description: _timerDescCtrl.text.trim().isEmpty ? null : _timerDescCtrl.text.trim(),
+        distance: double.tryParse(_timerDistCtrl.text.trim().replaceAll(',', '.')),
+        durationMinutes: (_elapsedSeconds / 60).ceil(),
+        elevation: double.tryParse(_timerElevCtrl.text.trim().replaceAll(',', '.')),
       );
       if (!mounted) return;
-      setState(() => _saving = false);
-      _showSnackBar('¡Actividad guardada correctamente!', AppColors.success);
-    } catch (_) {
+      _snack('¡Actividad guardada con éxito!');
+      _resetTimer();
+    } catch (e) {
       if (!mounted) return;
-      setState(() => _saving = false);
-      _showSnackBar('Error al guardar. Verifica tu conexión.', AppColors.error);
+      _snack('Error al guardar: ${e.toString()}');
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
-  void _showSnackBar(String message, Color color) {
+  Future<void> _saveManual() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_manualSportId == null) {
+      _snack('Selecciona un deporte');
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await ActivityRepository.saveActivity(
+        title: _manualTitleCtrl.text.trim(),
+        sportId: _manualSportId!,
+        description: _manualDescCtrl.text.trim().isEmpty ? null : _manualDescCtrl.text.trim(),
+        distance: double.tryParse(_manualDistCtrl.text.trim().replaceAll(',', '.')),
+        durationMinutes: int.tryParse(_manualDurationCtrl.text.trim()),
+        elevation: double.tryParse(_manualElevCtrl.text.trim().replaceAll(',', '.')),
+        date: _manualDate,
+      );
+      if (!mounted) return;
+      _snack('¡Actividad guardada con éxito!');
+      _manualTitleCtrl.clear();
+      _manualDescCtrl.clear();
+      _manualDistCtrl.clear();
+      _manualDurationCtrl.clear();
+      _manualElevCtrl.clear();
+      setState(() {
+        _manualSportId = null;
+        _manualDate = DateTime.now();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      _snack('Error al guardar: ${e.toString()}');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _snack(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: color,
+        content: Text(msg),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.all(16),
@@ -135,84 +192,59 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
     );
   }
 
-  // ── Build ─────────────────────────────────────────────────────────────────
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _manualDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null && mounted) setState(() => _manualDate = picked);
+  }
 
+  // ─── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Actividad')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-        child: Column(
-          children: [
-            _buildStateBadge(),
-            const SizedBox(height: 36),
-            _buildTimerDisplay(),
-            const SizedBox(height: 36),
-            _buildInfoCards(),
-            const SizedBox(height: 40),
-            _buildActionButtons(),
-            const SizedBox(height: 20),
-          ],
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Actividad'),
+          bottom: const TabBar(
+            tabs: [Tab(text: 'Cronómetro'), Tab(text: 'Manual')],
+            indicatorColor: AppColors.primary,
+            labelColor: AppColors.primary,
+            unselectedLabelColor: AppColors.grey,
+          ),
+        ),
+        body: TabBarView(
+          children: [_buildCronometroTab(), _buildManualTab()],
         ),
       ),
     );
   }
 
-  // ── Widgets ───────────────────────────────────────────────────────────────
-
-  Widget _buildStateBadge() {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 9),
-      decoration: BoxDecoration(
-        color: Color.fromRGBO(
-          (_stateColor.r * 255).round(),
-          (_stateColor.g * 255).round(),
-          (_stateColor.b * 255).round(),
-          0.12,
-        ),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: Color.fromRGBO(
-            (_stateColor.r * 255).round(),
-            (_stateColor.g * 255).round(),
-            (_stateColor.b * 255).round(),
-            0.4,
-          ),
-          width: 1.5,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+  // ─── Tab Cronómetro ────────────────────────────────────────────────────────
+  Widget _buildCronometroTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(
         children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(color: _stateColor, shape: BoxShape.circle),
-          ),
-          const SizedBox(width: 8),
-          AnimatedDefaultTextStyle(
-            duration: const Duration(milliseconds: 300),
-            style: TextStyle(
-              color: _stateColor,
-              fontWeight: FontWeight.w700,
-              fontSize: 14,
-              letterSpacing: 0.5,
-            ),
-            child: Text(_stateLabel),
-          ),
+          _buildTimerDisplay(),
+          const SizedBox(height: 28),
+          _buildTimerControls(),
+          if (_finished) ...[
+            const SizedBox(height: 32),
+            _buildTimerSaveCard(),
+          ],
+          const SizedBox(height: 20),
         ],
       ),
     );
   }
 
   Widget _buildTimerDisplay() {
-    final shadowColor = _state == _ActivityState.running
-        ? const Color(0x4DFF6B00)
-        : const Color(0x33000000);
-
+    final shadowColor = _isRunning ? const Color(0x4DFF6B00) : const Color(0x33000000);
     return Center(
       child: Container(
         width: 240,
@@ -220,28 +252,28 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: AppColors.black,
-          boxShadow: [BoxShadow(color: shadowColor, blurRadius: 32, spreadRadius: 4)],
+          boxShadow: [BoxShadow(color: shadowColor, blurRadius: 36, spreadRadius: 4)],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
-              _timeString,
+              _formattedTime,
               style: const TextStyle(
                 color: AppColors.white,
                 fontSize: 44,
                 fontWeight: FontWeight.w300,
                 letterSpacing: 2,
+                fontFeatures: [FontFeature.tabularFigures()],
               ),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'hh    mm    ss',
+            Text(
+              _isRunning ? 'En curso...' : (_finished ? 'Finalizada' : 'Lista'),
               style: TextStyle(
-                color: Color(0x66FFFFFF),
-                fontSize: 10,
-                letterSpacing: 5,
-                fontWeight: FontWeight.w400,
+                color: _isRunning ? AppColors.primary : const Color(0xB3FFFFFF),
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
               ),
             ),
           ],
@@ -250,251 +282,308 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
     );
   }
 
-  Widget _buildInfoCards() {
-    return Column(
+  Widget _buildTimerControls() {
+    if (_finished) {
+      return OutlinedButton.icon(
+        onPressed: _resetTimer,
+        icon: const Icon(Icons.replay_rounded),
+        label: const Text('Nueva actividad'),
+        style: OutlinedButton.styleFrom(foregroundColor: AppColors.grey),
+      );
+    }
+    if (!_isRunning && _elapsedSeconds == 0) {
+      return SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          onPressed: _startTimer,
+          icon: const Icon(Icons.play_arrow_rounded),
+          label: const Text('Iniciar'),
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.primary,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+        ),
+      );
+    }
+    return Row(
       children: [
-        _buildActivityTypeCard(),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: _buildStatCard(
-                label: 'Distancia',
-                value: '0.00 km',
-                icon: Icons.route_rounded,
-                color: AppColors.info,
-              ),
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: _isRunning ? _pauseTimer : _startTimer,
+            icon: Icon(_isRunning ? Icons.pause_rounded : Icons.play_arrow_rounded),
+            label: Text(_isRunning ? 'Pausar' : 'Reanudar'),
+            style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: FilledButton.icon(
+            onPressed: _finishTimer,
+            icon: const Icon(Icons.stop_rounded),
+            label: const Text('Finalizar'),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.error,
+              padding: const EdgeInsets.symmetric(vertical: 14),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildStatCard(
-                label: 'Ritmo prom.',
-                value: '--:-- /km',
-                icon: Icons.speed_rounded,
-                color: AppColors.primary,
-              ),
-            ),
-          ],
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildActivityTypeCard() {
+  Widget _buildTimerSaveCard() {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: AppColors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: const [
-          BoxShadow(color: AppColors.shadowLight, blurRadius: 8, offset: Offset(0, 3)),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: const Color(0x1FFF6B00),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.directions_run_rounded, color: AppColors.primary, size: 24),
-          ),
-          const SizedBox(width: 14),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Tipo de actividad',
-                style: TextStyle(fontSize: 11, color: AppColors.grey),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                _sportName,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.black),
-              ),
-            ],
-          ),
-          const Spacer(),
-          const Icon(Icons.chevron_right_rounded, color: AppColors.grey),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatCard({
-    required String label,
-    required String value,
-    required IconData icon,
-    required Color color,
-  }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: const [
-          BoxShadow(color: AppColors.shadowLight, blurRadius: 8, offset: Offset(0, 3)),
+          BoxShadow(color: AppColors.shadowLight, blurRadius: 12, offset: Offset(0, 4)),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(height: 10),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AppColors.black),
+          Row(
+            children: [
+              const Icon(Icons.check_circle_outline_rounded, color: AppColors.success),
+              const SizedBox(width: 8),
+              const Text(
+                'Guardar actividad',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.black),
+              ),
+            ],
           ),
-          const SizedBox(height: 2),
-          Text(label, style: const TextStyle(fontSize: 11, color: AppColors.grey)),
+          const SizedBox(height: 4),
+          Text(
+            'Duración total: $_formattedTime',
+            style: const TextStyle(fontSize: 12, color: AppColors.grey),
+          ),
+          const SizedBox(height: 18),
+          _buildSportDropdown(_timerSportId, (v) => setState(() => _timerSportId = v)),
+          const SizedBox(height: 14),
+          _buildInput(controller: _timerTitleCtrl, label: 'Título *', hint: 'Ej: Carrera matutina'),
+          const SizedBox(height: 14),
+          _buildInput(
+            controller: _timerDescCtrl,
+            label: 'Descripción (opcional)',
+            hint: 'Describe tu actividad',
+            maxLines: 2,
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _buildInput(
+                  controller: _timerDistCtrl,
+                  label: 'Distancia (km)',
+                  hint: '0.0',
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildInput(
+                  controller: _timerElevCtrl,
+                  label: 'Elevación (m)',
+                  hint: '0',
+                  keyboardType: TextInputType.number,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: _saving ? null : _saveFromTimer,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              child: _saving
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.white))
+                  : const Text('Guardar', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildActionButtons() {
-    return switch (_state) {
-      _ActivityState.ready => _primaryButton(
-          label: 'Iniciar',
-          icon: Icons.play_arrow_rounded,
-          onPressed: _start,
-        ),
-      _ActivityState.running => Row(
+  // ─── Tab Manual ────────────────────────────────────────────────────────────
+  Widget _buildManualTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: _outlineButton(
-                label: 'Pausar',
-                icon: Icons.pause_rounded,
-                onPressed: _pause,
-              ),
+            const Text(
+              'Registrar actividad',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: AppColors.black),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _dangerButton(
-                label: 'Finalizar',
-                icon: Icons.stop_rounded,
-                onPressed: _finish,
-              ),
+            const SizedBox(height: 4),
+            const Text(
+              'Añade los datos de tu actividad manualmente',
+              style: TextStyle(fontSize: 13, color: AppColors.grey),
             ),
-          ],
-        ),
-      _ActivityState.paused => Row(
-          children: [
-            Expanded(
-              child: _primaryButton(
-                label: 'Reanudar',
-                icon: Icons.play_arrow_rounded,
-                onPressed: _start,
-              ),
+            const SizedBox(height: 22),
+            _buildSportDropdown(_manualSportId, (v) => setState(() => _manualSportId = v)),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: _manualTitleCtrl,
+              decoration: _dec(label: 'Título *', hint: 'Ej: Carrera matutina'),
+              validator: (v) => (v == null || v.trim().isEmpty) ? 'El título es obligatorio' : null,
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _dangerButton(
-                label: 'Finalizar',
-                icon: Icons.stop_rounded,
-                onPressed: _finish,
-              ),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: _manualDescCtrl,
+              maxLines: 3,
+              decoration: _dec(label: 'Descripción (opcional)', hint: 'Describe tu actividad'),
             ),
-          ],
-        ),
-      _ActivityState.finished => _buildSaveSection(),
-    };
-  }
-
-  Widget _buildSaveSection() {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: const Color(0x0F4CAF50),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0x334CAF50), width: 1.5),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.check_circle_outline_rounded, color: AppColors.success, size: 26),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _manualDistCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: _dec(label: 'Distancia (km)', hint: '0.0'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    controller: _manualDurationCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: _dec(label: 'Duración (min)', hint: '30'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: _manualElevCtrl,
+              keyboardType: TextInputType.number,
+              decoration: _dec(label: 'Elevación (m)', hint: '0'),
+            ),
+            const SizedBox(height: 14),
+            GestureDetector(
+              onTap: _pickDate,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                decoration: BoxDecoration(
+                  color: AppColors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE0E0E0)),
+                ),
+                child: Row(
                   children: [
-                    const Text(
-                      'Actividad finalizada',
-                      style: TextStyle(fontWeight: FontWeight.w700, color: AppColors.black, fontSize: 15),
-                    ),
-                    const SizedBox(height: 2),
+                    const Icon(Icons.calendar_today_rounded, size: 16, color: AppColors.grey),
+                    const SizedBox(width: 10),
                     Text(
-                      'Duración total: $_timeString',
-                      style: const TextStyle(fontSize: 13, color: AppColors.grey),
+                      '${_manualDate.day.toString().padLeft(2, '0')}/'
+                      '${_manualDate.month.toString().padLeft(2, '0')}/'
+                      '${_manualDate.year}',
+                      style: const TextStyle(fontSize: 14, color: AppColors.black),
+                    ),
+                    const Spacer(),
+                    const Text(
+                      'Cambiar',
+                      style: TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w600),
                     ),
                   ],
                 ),
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 28),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: _saving ? null : _saveManual,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                child: _saving
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.white))
+                    : const Text('Guardar actividad', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
         ),
-        const SizedBox(height: 16),
-        ElevatedButton.icon(
-          onPressed: _saving ? null : _save,
-          icon: _saving
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(color: AppColors.white, strokeWidth: 2),
-                )
-              : const Icon(Icons.save_rounded),
-          label: Text(_saving ? 'Guardando...' : 'Guardar actividad'),
-        ),
-      ],
-    );
-  }
-
-  // ── Helpers de botones ────────────────────────────────────────────────────
-
-  Widget _primaryButton({
-    required String label,
-    required IconData icon,
-    required VoidCallback onPressed,
-  }) {
-    return ElevatedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon),
-      label: Text(label),
-    );
-  }
-
-  Widget _outlineButton({
-    required String label,
-    required IconData icon,
-    required VoidCallback onPressed,
-  }) {
-    return OutlinedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon, color: AppColors.black),
-      label: Text(label, style: const TextStyle(color: AppColors.black)),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: AppColors.black,
-        side: const BorderSide(color: AppColors.greyDark, width: 1.5),
       ),
     );
   }
 
-  Widget _dangerButton({
+  // ─── Shared helpers ────────────────────────────────────────────────────────
+  Widget _buildSportDropdown(String? value, ValueChanged<String?> onChanged) {
+    if (_sportsLoading) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE0E0E0)),
+        ),
+        child: const Row(
+          children: [
+            SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(width: 10),
+            Text('Cargando deportes…', style: TextStyle(color: AppColors.grey, fontSize: 14)),
+          ],
+        ),
+      );
+    }
+    return DropdownButtonFormField<String>(
+      key: ValueKey(value),
+      initialValue: value,
+      decoration: _dec(label: 'Deporte *', hint: 'Selecciona un deporte'),
+      items: _sports.map((s) => DropdownMenuItem(value: s.id, child: Text(s.name))).toList(),
+      onChanged: onChanged,
+    );
+  }
+
+  Widget _buildInput({
+    required TextEditingController controller,
     required String label,
-    required IconData icon,
-    required VoidCallback onPressed,
+    String? hint,
+    int maxLines = 1,
+    TextInputType? keyboardType,
   }) {
-    return ElevatedButton.icon(
-      onPressed: onPressed,
-      icon: Icon(icon),
-      label: Text(label),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: AppColors.error,
-        foregroundColor: AppColors.white,
+    return TextField(
+      controller: controller,
+      maxLines: maxLines,
+      keyboardType: keyboardType,
+      decoration: _dec(label: label, hint: hint),
+    );
+  }
+
+  InputDecoration _dec({required String label, String? hint}) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      filled: true,
+      fillColor: AppColors.white,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
       ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: const BorderSide(color: AppColors.primary, width: 2),
+      ),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
     );
   }
 }

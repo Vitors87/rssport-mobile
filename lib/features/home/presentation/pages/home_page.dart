@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import '../../../../theme/app_colors.dart';
+import '../../../../routing/app_routes.dart';
+import '../../../../shared/utils/sport_utils.dart';
+import '../../../../shared/utils/app_date_utils.dart';
 import '../../../activity/data/models/activity_model.dart';
 import '../../../activity/data/repositories/activity_repository.dart';
 import '../../../events/data/models/event_model.dart';
 import '../../../events/data/repositories/events_repository.dart';
+import '../../../ranking/data/models/ranking_entry.dart';
+import '../../../ranking/data/ranking_utils.dart';
 
 class _HomeData {
   final List<EventModel> events;
@@ -55,7 +61,14 @@ class _HomePageState extends State<HomePage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.notifications_outlined),
-            onPressed: () {},
+            onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: const Text('Notificaciones disponibles próximamente'),
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                margin: const EdgeInsets.all(16),
+              ),
+            ),
           ),
         ],
       ),
@@ -77,6 +90,12 @@ class _HomePageState extends State<HomePage> {
   Widget _buildContent(_HomeData data) {
     final upcomingEvents = data.events.take(2).toList();
     final recentActivities = data.activities.take(3).toList();
+    final top3 = RankingUtils.combined(data.activities, 'RUNNING', minEntries: 3).take(3).toList();
+
+    // Stats reales desde actividades
+    final totalKm = data.activities.fold(0.0, (s, a) => s + (a.distance ?? 0));
+    final totalActivities = data.activities.length;
+    final totalElevation = data.activities.fold(0.0, (s, a) => s + (a.elevation ?? 0));
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -85,9 +104,9 @@ class _HomePageState extends State<HomePage> {
         children: [
           _buildGreetingCard(),
           const SizedBox(height: 20),
-          _buildWeeklyStats(),
+          _buildStatsRow(totalKm, totalActivities, totalElevation),
           const SizedBox(height: 24),
-          _buildSectionHeader('Próximos Eventos'),
+          _buildSectionHeader('Próximos Eventos', onViewAll: () => context.go(AppRoutes.events)),
           const SizedBox(height: 12),
           if (upcomingEvents.isEmpty)
             const Padding(
@@ -102,7 +121,7 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
           const SizedBox(height: 24),
-          _buildSectionHeader('Actividades Recientes'),
+          _buildSectionHeader('Actividades Recientes', onViewAll: () => context.go(AppRoutes.community)),
           const SizedBox(height: 12),
           if (recentActivities.isEmpty)
             const Padding(
@@ -116,6 +135,8 @@ class _HomePageState extends State<HomePage> {
                 child: _buildActivityCard(a),
               ),
             ),
+          const SizedBox(height: 24),
+          _buildTopRunnersSection(top3),
           const SizedBox(height: 20),
         ],
       ),
@@ -140,12 +161,12 @@ class _HomePageState extends State<HomePage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '¡Hola, Deportista!',
+                  '¡Hola, Demo Runner!',
                   style: TextStyle(color: AppColors.white, fontSize: 20, fontWeight: FontWeight.w700),
                 ),
                 SizedBox(height: 4),
                 Text(
-                  'Llevas 7 días activo. ¡Sigue así!',
+                  'Registra tu actividad de hoy',
                   style: TextStyle(color: Color(0xB3FFFFFF), fontSize: 13),
                 ),
               ],
@@ -161,14 +182,17 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildWeeklyStats() {
+  Widget _buildStatsRow(double totalKm, int totalActivities, double totalElevation) {
+    final kmLabel = totalKm > 0 ? '${totalKm.toStringAsFixed(1)} km' : '--';
+    final elevLabel = totalElevation > 0 ? '${totalElevation.toInt()} m' : '--';
+
     return Row(
       children: [
-        _buildStatCard('42.5 km', 'esta semana', Icons.route_rounded, AppColors.primary),
+        _buildStatCard(kmLabel, 'recorridos', Icons.route_rounded, AppColors.primary),
         const SizedBox(width: 10),
-        _buildStatCard('5', 'actividades', Icons.fitness_center_rounded, const Color(0xFF1565C0)),
+        _buildStatCard('$totalActivities', 'actividades', Icons.fitness_center_rounded, const Color(0xFF1565C0)),
         const SizedBox(width: 10),
-        _buildStatCard('2.4k', 'calorías', Icons.local_fire_department_rounded, const Color(0xFFE53935)),
+        _buildStatCard(elevLabel, 'elevación', Icons.terrain_rounded, const Color(0xFF2E7D32)),
       ],
     );
   }
@@ -205,7 +229,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildSectionHeader(String title) {
+  Widget _buildSectionHeader(String title, {VoidCallback? onViewAll}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -213,16 +237,19 @@ class _HomePageState extends State<HomePage> {
           title,
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.black),
         ),
-        const Text(
-          'Ver todos',
-          style: TextStyle(fontSize: 13, color: AppColors.primary, fontWeight: FontWeight.w600),
+        GestureDetector(
+          onTap: onViewAll,
+          child: const Text(
+            'Ver todos',
+            style: TextStyle(fontSize: 13, color: AppColors.primary, fontWeight: FontWeight.w600),
+          ),
         ),
       ],
     );
   }
 
   Widget _buildEventCard(EventModel event) {
-    final color = _colorForSport(event.sportType);
+    final color = SportUtils.colorForType(event.sportType);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -246,7 +273,7 @@ class _HomePageState extends State<HomePage> {
               ),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(Icons.event_rounded, color: color, size: 26),
+            child: Icon(SportUtils.iconForType(event.sportType), color: color, size: 26),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -263,7 +290,7 @@ class _HomePageState extends State<HomePage> {
                   children: [
                     const Icon(Icons.calendar_today_rounded, size: 11, color: AppColors.grey),
                     const SizedBox(width: 3),
-                    Text(_formatDate(event.date), style: const TextStyle(fontSize: 11, color: AppColors.grey)),
+                    Text(AppDateUtils.format(event.date), style: const TextStyle(fontSize: 11, color: AppColors.grey)),
                     const SizedBox(width: 8),
                     const Icon(Icons.location_on_rounded, size: 11, color: AppColors.grey),
                     const SizedBox(width: 2),
@@ -331,11 +358,7 @@ class _HomePageState extends State<HomePage> {
                 backgroundColor: const Color(0x26FF6B00),
                 child: Text(
                   activity.userInitials,
-                  style: const TextStyle(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 13,
-                  ),
+                  style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w700, fontSize: 13),
                 ),
               ),
               const SizedBox(width: 10),
@@ -364,7 +387,7 @@ class _HomePageState extends State<HomePage> {
             children: [
               _buildMetric(activity.distanceLabel, 'Distancia'),
               _buildMetric(activity.durationLabel, 'Tiempo'),
-              _buildMetric(activity.sportName, 'Deporte'),
+              _buildMetric(SportUtils.labelForType(activity.sportType), 'Deporte'),
             ],
           ),
         ],
@@ -375,13 +398,94 @@ class _HomePageState extends State<HomePage> {
   Widget _buildMetric(String value, String label) {
     return Column(
       children: [
-        Text(
-          value,
-          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppColors.black),
-        ),
+        Text(value, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppColors.black)),
         const SizedBox(height: 2),
         Text(label, style: const TextStyle(fontSize: 11, color: AppColors.grey)),
       ],
+    );
+  }
+
+  Widget _buildTopRunnersSection(List<RankingEntry> top3) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              'Top Corredores',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.black),
+            ),
+            GestureDetector(
+              onTap: () => context.go(AppRoutes.ranking),
+              child: const Text(
+                'Ver ranking',
+                style: TextStyle(fontSize: 13, color: AppColors.primary, fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        ...top3.asMap().entries.map(
+          (e) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _buildRankingItem(e.value),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRankingItem(RankingEntry entry) {
+    final medals = ['🥇', '🥈', '🥉'];
+    final medal = entry.position <= 3 ? medals[entry.position - 1] : '#${entry.position}';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: const [
+          BoxShadow(color: AppColors.shadowLight, blurRadius: 8, offset: Offset(0, 3)),
+        ],
+      ),
+      child: Row(
+        children: [
+          Text(medal, style: const TextStyle(fontSize: 18)),
+          const SizedBox(width: 10),
+          CircleAvatar(
+            radius: 16,
+            backgroundColor: const Color(0x26FF6B00),
+            child: Text(
+              entry.name.isNotEmpty ? entry.name[0].toUpperCase() : 'U',
+              style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w700, fontSize: 12),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  entry.name,
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.black),
+                ),
+                Text('@${entry.username}', style: const TextStyle(fontSize: 11, color: AppColors.grey)),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${entry.totalKm.toStringAsFixed(1)} km',
+                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: AppColors.black),
+              ),
+              Text('${entry.activities} act.', style: const TextStyle(fontSize: 10, color: AppColors.grey)),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -399,10 +503,7 @@ class _HomePageState extends State<HomePage> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.black),
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Verifica tu conexión a internet',
-              style: TextStyle(fontSize: 13, color: AppColors.grey),
-            ),
+            const Text('Verifica tu conexión a internet', style: TextStyle(fontSize: 13, color: AppColors.grey)),
             const SizedBox(height: 24),
             ElevatedButton.icon(
               onPressed: onRetry,
@@ -413,19 +514,5 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
-  }
-
-  Color _colorForSport(String sportType) {
-    return switch (sportType) {
-      'RUNNING' => AppColors.primary,
-      'CYCLING' => const Color(0xFF1565C0),
-      'TREKKING' => const Color(0xFF2E7D32),
-      _ => AppColors.grey,
-    };
-  }
-
-  String _formatDate(DateTime date) {
-    const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-    return '${date.day} ${months[date.month - 1]} ${date.year}';
   }
 }

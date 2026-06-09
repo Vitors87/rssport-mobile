@@ -11,17 +11,27 @@ abstract class ActivityRepository {
         .toList();
   }
 
+  /// Guarda una actividad. [durationMinutes] en minutos, consistente con el backend.
   static Future<ActivityModel> saveActivity({
     required String title,
-    required int durationSeconds,
     required String sportId,
+    String? description,
+    double? distance,
+    int? durationMinutes,
+    double? elevation,
+    DateTime? date,
   }) async {
-    final data = await ApiClient.post(ApiEndpoints.activities, {
+    final body = <String, dynamic>{
       'title': title,
-      'duration': durationSeconds,
-      'date': DateTime.now().toUtc().toIso8601String(),
       'sportId': sportId,
-    });
+      'date': (date ?? DateTime.now()).toUtc().toIso8601String(),
+    };
+    if (description != null && description.isNotEmpty) body['description'] = description;
+    if (distance != null && distance > 0) body['distance'] = distance;
+    if (durationMinutes != null && durationMinutes > 0) body['duration'] = durationMinutes;
+    if (elevation != null && elevation > 0) body['elevation'] = elevation;
+
+    final data = await ApiClient.post(ApiEndpoints.activities, body);
     return ActivityModel.fromJson(data['activity'] as Map<String, dynamic>);
   }
 }
