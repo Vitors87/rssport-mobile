@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../../theme/app_colors.dart';
+import '../../data/repositories/activity_repository.dart';
+import '../../data/repositories/sports_repository.dart';
 
-// Estados posibles del cronómetro de actividad
 enum _ActivityState { ready, running, paused, finished }
 
 class ActivityTrackerPage extends StatefulWidget {
@@ -17,7 +18,43 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
   Timer? _timer;
   int _elapsedSeconds = 0;
 
+  // Deporte cargado desde la API
+  String? _runningSportId;
+  String _sportName = 'Running';
+  bool _saving = false;
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRunningSport();
+  }
+
+  Future<void> _loadRunningSport() async {
+    try {
+      final sports = await SportsRepository.getSports();
+      if (!mounted) return;
+      final running = sports.where((s) => s.type == 'RUNNING').firstOrNull;
+      if (running != null) {
+        setState(() {
+          _runningSportId = running.id;
+          _sportName = running.name;
+        });
+      }
+    } catch (_) {
+      // Fallo silencioso; el botón guardar lo gestionará si sportId es null
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
   // ── Formateo HH:MM:SS ─────────────────────────────────────────────────────
+
   String get _timeString {
     final h = _elapsedSeconds ~/ 3600;
     final m = (_elapsedSeconds % 3600) ~/ 60;
@@ -28,6 +65,7 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
   }
 
   // ── Estado visual ─────────────────────────────────────────────────────────
+
   String get _stateLabel => switch (_state) {
         _ActivityState.ready => 'Lista',
         _ActivityState.running => 'En curso',
@@ -43,6 +81,7 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
       };
 
   // ── Acciones del cronómetro ───────────────────────────────────────────────
+
   void _start() {
     setState(() => _state = _ActivityState.running);
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -60,11 +99,35 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
     setState(() => _state = _ActivityState.finished);
   }
 
-  void _save() {
+  Future<void> _save() async {
+    if (_runningSportId == null) {
+      _showSnackBar('No se pudo conectar al servidor. Inténtalo de nuevo.', AppColors.error);
+      return;
+    }
+
+    setState(() => _saving = true);
+
+    try {
+      await ActivityRepository.saveActivity(
+        title: 'Actividad desde mobile',
+        durationSeconds: _elapsedSeconds,
+        sportId: _runningSportId!,
+      );
+      if (!mounted) return;
+      setState(() => _saving = false);
+      _showSnackBar('¡Actividad guardada correctamente!', AppColors.success);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      _showSnackBar('Error al guardar. Verifica tu conexión.', AppColors.error);
+    }
+  }
+
+  void _showSnackBar(String message, Color color) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Text('Actividad guardada correctamente'),
-        backgroundColor: AppColors.success,
+        content: Text(message),
+        backgroundColor: color,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.all(16),
@@ -72,19 +135,12 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
     );
   }
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
   // ── Build ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Actividad'),
-      ),
+      appBar: AppBar(title: const Text('Actividad')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
         child: Column(
@@ -130,7 +186,6 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Indicador pulsante de estado
           AnimatedContainer(
             duration: const Duration(milliseconds: 300),
             width: 8,
@@ -154,10 +209,9 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
   }
 
   Widget _buildTimerDisplay() {
-    // Sombra naranja cuando está activo, negra cuando no
     final shadowColor = _state == _ActivityState.running
-        ? const Color(0x4DFF6B00) // primary 30%
-        : const Color(0x33000000); // negro 20%
+        ? const Color(0x4DFF6B00)
+        : const Color(0x33000000);
 
     return Center(
       child: Container(
@@ -166,9 +220,7 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: AppColors.black,
-          boxShadow: [
-            BoxShadow(color: shadowColor, blurRadius: 32, spreadRadius: 4),
-          ],
+          boxShadow: [BoxShadow(color: shadowColor, blurRadius: 32, spreadRadius: 4)],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -186,7 +238,7 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
             const Text(
               'hh    mm    ss',
               style: TextStyle(
-                color: Color(0x66FFFFFF), // blanco 40%
+                color: Color(0x66FFFFFF),
                 fontSize: 10,
                 letterSpacing: 5,
                 fontWeight: FontWeight.w400,
@@ -201,10 +253,8 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
   Widget _buildInfoCards() {
     return Column(
       children: [
-        // Selector de tipo de actividad (mock)
         _buildActivityTypeCard(),
         const SizedBox(height: 12),
-        // Stats: distancia y ritmo
         Row(
           children: [
             Expanded(
@@ -246,23 +296,23 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
             width: 46,
             height: 46,
             decoration: BoxDecoration(
-              color: const Color(0x1FFF6B00), // primary 12%
+              color: const Color(0x1FFF6B00),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(Icons.directions_run_rounded, color: AppColors.primary, size: 24),
           ),
           const SizedBox(width: 14),
-          const Column(
+          Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
+              const Text(
                 'Tipo de actividad',
                 style: TextStyle(fontSize: 11, color: AppColors.grey),
               ),
-              SizedBox(height: 2),
+              const SizedBox(height: 2),
               Text(
-                'Running',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.black),
+                _sportName,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: AppColors.black),
               ),
             ],
           ),
@@ -295,11 +345,7 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
           const SizedBox(height: 10),
           Text(
             value,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-              color: AppColors.black,
-            ),
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AppColors.black),
           ),
           const SizedBox(height: 2),
           Text(label, style: const TextStyle(fontSize: 11, color: AppColors.grey)),
@@ -360,11 +406,10 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
   Widget _buildSaveSection() {
     return Column(
       children: [
-        // Resumen de la actividad finalizada
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0x0F4CAF50), // success 6%
+            color: const Color(0x0F4CAF50),
             borderRadius: BorderRadius.circular(16),
             border: Border.all(color: const Color(0x334CAF50), width: 1.5),
           ),
@@ -393,9 +438,15 @@ class _ActivityTrackerPageState extends State<ActivityTrackerPage> {
         ),
         const SizedBox(height: 16),
         ElevatedButton.icon(
-          onPressed: _save,
-          icon: const Icon(Icons.save_rounded),
-          label: const Text('Guardar actividad'),
+          onPressed: _saving ? null : _save,
+          icon: _saving
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(color: AppColors.white, strokeWidth: 2),
+                )
+              : const Icon(Icons.save_rounded),
+          label: Text(_saving ? 'Guardando...' : 'Guardar actividad'),
         ),
       ],
     );
